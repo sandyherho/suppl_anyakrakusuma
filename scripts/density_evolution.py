@@ -132,9 +132,16 @@ def count_regions(Zn, level=REGION_LEVEL):
     return int(n)
 
 
-def peak_location(Zn, xs, ys):
-    j, i = np.unravel_index(np.argmax(Zn), Zn.shape)
-    return float(xs[i]), float(ys[j])
+def effective_area(Zn, cell_area):
+    """Participation-based effective support area exp(H[p]) * cell_area.
+
+    A smooth, ridge-robust measure of how much area the density occupies,
+    replacing the argmax peak location which is degenerate for rings/curves.
+    """
+    p = (Zn / Zn.sum()).ravel()
+    nz = p > 0
+    Hgrid = -np.sum(p[nz] * np.log(p[nz]))
+    return float(np.exp(Hgrid) * cell_area)
 
 
 # --------------------------------------------------------------------------- #
@@ -153,6 +160,7 @@ def write_report(records, out_path):
     L.append(f" Snapshot times : {', '.join(f'{t:.2f}' for t in SNAP_TIMES)}")
     L.append(f" Regions        : connected components of {{rho >= {REGION_LEVEL:.2f} max}}")
     L.append(f" Support area   : fraction of the panel with density >= {DISPLAY_FLOOR:.2f}")
+    L.append(f" Eff. area      : exp(Shannon entropy of the density) x cell area")
     L.append(bar)
     L.append("")
 
@@ -161,14 +169,13 @@ def write_report(records, out_path):
         L.append(f" CASE {i}: {rec['label']}")
         L.append(f" File: {rec['file']}   (KDE bandwidth factor = {rec['bw']:.4f})")
         L.append(sub)
-        L.append(f"   {'t':>6}{'regions':>9}{'peak_x':>12}{'peak_y':>12}"
+        L.append(f"   {'t':>6}{'regions':>9}{'eff_area':>12}"
                  f"{'support_frac':>14}{'centroid_x':>12}{'centroid_y':>12}")
         L.append(" " + sub[:75])
         for s in rec["snaps"]:
             L.append(
-                f"   {s['t']:>6.2f}{s['modes']:>9d}{s['peak'][0]:>12.5f}"
-                f"{s['peak'][1]:>12.5f}{s['support']:>14.5f}"
-                f"{s['centroid'][0]:>12.5f}{s['centroid'][1]:>12.5f}"
+                f"   {s['t']:>6.2f}{s['modes']:>9d}{s['eff_area']:>12.5f}"
+                f"{s['support']:>14.5f}{s['centroid'][0]:>12.5f}{s['centroid'][1]:>12.5f}"
             )
         L.append("")
 
@@ -262,7 +269,7 @@ def main():
             snaps.append({
                 "t": t, "grid": Zn,
                 "modes": count_regions(Zn),
-                "peak": peak_location(Zn, xs, ys),
+                "eff_area": effective_area(Zn, cell_area),
                 "support": support,
                 "centroid": (float(cloud[:, 0].mean()), float(cloud[:, 1].mean())),
             })

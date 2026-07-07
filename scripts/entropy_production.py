@@ -53,7 +53,7 @@ CASES = [
 
 CASE_COLORS = ["#4C72B0", "#DD8452", "#55A868", "#C44E52"]
 K_NEIGHBOURS = 5
-ECC_MIN = 0.20          # orientation is undefined for near-isotropic clouds
+ECC_MIN = 0.25          # orientation resolved only above this anisotropy
 BOOT_B = 80             # subsampling replicates for the uncertainty bands
 BOOT_FRAC = 0.80        # subsample size as a fraction of N (no replacement)
 CI_Z = 1.96             # 95% Gaussian band
@@ -130,29 +130,38 @@ def analyse_case(traj, time):
     H = np.empty(nframes); rms = np.empty(nframes)
     ecc = np.empty(nframes); angle2 = np.empty(nframes)
     H_hw = np.empty(nframes); rms_hw = np.empty(nframes); ecc_hw = np.empty(nframes)
+    ang_hw = np.empty(nframes)
 
     for f in range(nframes):
         pts = traj[f]
         H[f] = knn_differential_entropy(pts)
         rms[f], ecc[f], _, _, angle2[f] = ellipse_descriptors(pts)
 
-        Hs = np.empty(BOOT_B); Rs = np.empty(BOOT_B); Es = np.empty(BOOT_B)
+        Hs = np.empty(BOOT_B); Rs = np.empty(BOOT_B)
+        Es = np.empty(BOOT_B); A2 = np.empty(BOOT_B)
         for b in range(BOOT_B):
             p = pts[rng.choice(n, m, replace=False)]
             Hs[b] = knn_differential_entropy(p)
-            Rs[b], Es[b], _, _, _ = ellipse_descriptors(p)
+            Rs[b], Es[b], _, _, A2[b] = ellipse_descriptors(p)
         H_hw[f] = CI_Z * Hs.std() * scale
         rms_hw[f] = CI_Z * Rs.std() * scale
         ecc_hw[f] = CI_Z * Es.std() * scale
+        # circular spread of the doubled principal-axis angle across subsamples
+        R = np.abs(np.mean(np.exp(1j * A2)))
+        sigma_circ = np.sqrt(-2.0 * np.log(R)) if R > 1e-12 else np.inf
+        ang_hw[f] = np.degrees(0.5 * sigma_circ * scale) * CI_Z
 
     # Orientation is only meaningful for anisotropic clouds; unwrap the
     # doubled angle over the reliable frames only and mask the rest.
     angle_deg = np.full(nframes, np.nan)
+    ang_band = np.full(nframes, np.nan)
     reliable = np.where(ecc >= ECC_MIN)[0]
     if reliable.size:
         angle_deg[reliable] = np.degrees(0.5 * np.unwrap(angle2[reliable]))
+        ang_band[reliable] = ang_hw[reliable]
     return {"H": H, "rms": rms, "ecc": ecc, "angle": angle_deg,
-            "H_hw": H_hw, "rms_hw": rms_hw, "ecc_hw": ecc_hw}
+            "H_hw": H_hw, "rms_hw": rms_hw, "ecc_hw": ecc_hw,
+            "angle_hw": ang_band}
 
 
 # --------------------------------------------------------------------------- #
@@ -224,8 +233,12 @@ def write_report(results, out_path):
         L.append("")
         L.append(" Covariance-ellipse geometry")
         L.append(f"   Eccentricity  range [min, max]          = [{np.min(d['ecc']):.6f}, {np.max(d['ecc']):.6f}]")
+        L.append(f"   Orientation resolved frames (ecc>={ECC_MIN:.2f})  = {int(np.isfinite(d['angle']).sum())} / {len(d['angle'])}")
         L.append(f"   Orientation angle  first / last  [deg]  = {ang_str}")
         L.append(f"   Total orientation sweep       [deg]     = {sweep_str}")
+        ohw = d["angle_hw"][np.isfinite(d["angle_hw"])]
+        ohw_str = f"{float(np.mean(ohw)):.4f}" if ohw.size else "n/a"
+        L.append(f"   Mean 95% orientation half-width [deg]   = {ohw_str}")
         L.append("")
 
     L.append(bar)
@@ -261,7 +274,7 @@ def make_figure(results, out_stem):
     ylabels = [r"$H(\rho_t)$ [nats]", r"RMS dispersion [dimensionless]",
                r"eccentricity [dimensionless]", r"orientation [deg]"]
 
-    hw_keys = {0: "H_hw", 1: "rms_hw", 2: "ecc_hw"}
+    hw_keys = {0: "H_hw", 1: "rms_hw", 2: "ecc_hw", 3: "angle_hw"}
     for p, ax in enumerate(axes.flat):
         for r, color in zip(results, CASE_COLORS):
             y = r["desc"][keys[p]]
