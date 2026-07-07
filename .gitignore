@@ -1,0 +1,24 @@
+# Track only the analysis scripts; ignore all generated data and outputs.
+
+# --- Simulation data (NetCDF) ---
+*.nc
+*.nc4
+*.cdf
+raw_data/
+
+# --- Generated figures ---
+figures/
+*.pdf
+*.png
+*.eps
+*.svg
+
+# --- Generated calculations / text reports ---
+calculations/
+
+# --- Python / OS cruft ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.DS_Store
