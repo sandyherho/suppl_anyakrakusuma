@@ -151,14 +151,19 @@ def analyse_case(traj, time):
         sigma_circ = np.sqrt(-2.0 * np.log(R)) if R > 1e-12 else np.inf
         ang_hw[f] = np.degrees(0.5 * sigma_circ * scale) * CI_Z
 
-    # Orientation is only meaningful for anisotropic clouds; unwrap the
-    # doubled angle over the reliable frames only and mask the rest.
+    # Orientation is a principal-axis angle, defined only modulo 180 deg and
+    # only for anisotropic clouds. Unwrap within each contiguous resolved
+    # segment (smooth where observable) but never across a masked isotropic
+    # gap: the two sides are near-antipodal there and the connecting branch is
+    # genuinely undefined, so any cross-gap unwrap is data-dependent noise.
     angle_deg = np.full(nframes, np.nan)
     ang_band = np.full(nframes, np.nan)
-    reliable = np.where(ecc >= ECC_MIN)[0]
-    if reliable.size:
-        angle_deg[reliable] = np.degrees(0.5 * np.unwrap(angle2[reliable]))
-        ang_band[reliable] = ang_hw[reliable]
+    rel = ecc >= ECC_MIN
+    if rel.sum() >= 1:
+        idx = np.arange(nframes)[rel]
+        for run in np.split(idx, np.where(np.diff(idx) > 1)[0] + 1):
+            angle_deg[run] = np.degrees(0.5 * np.unwrap(angle2[run]))
+        ang_band[rel] = ang_hw[rel]
     return {"H": H, "rms": rms, "ecc": ecc, "angle": angle_deg,
             "H_hw": H_hw, "rms_hw": rms_hw, "ecc_hw": ecc_hw,
             "angle_hw": ang_band}
@@ -205,8 +210,9 @@ def write_report(results, out_path):
         defined = np.where(np.isfinite(ang))[0]
         if defined.size:
             ang0, ang1 = ang[defined[0]], ang[defined[-1]]
+            reorient = (ang1 - ang0 + 90.0) % 180.0 - 90.0   # mod-180 fold, (-90,90]
             ang_str = f"{ang0:.4f} / {ang1:.4f}"
-            sweep_str = f"{ang1 - ang0:.4f}"
+            sweep_str = f"{reorient:.4f}"
         else:
             ang0 = ang1 = np.nan
             ang_str = "undefined (near-isotropic cloud)"
@@ -235,7 +241,7 @@ def write_report(results, out_path):
         L.append(f"   Eccentricity  range [min, max]          = [{np.min(d['ecc']):.6f}, {np.max(d['ecc']):.6f}]")
         L.append(f"   Orientation resolved frames (ecc>={ECC_MIN:.2f})  = {int(np.isfinite(d['angle']).sum())} / {len(d['angle'])}")
         L.append(f"   Orientation angle  first / last  [deg]  = {ang_str}")
-        L.append(f"   Total orientation sweep       [deg]     = {sweep_str}")
+        L.append(f"   Net axis reorientation (mod 180) [deg]  = {sweep_str}")
         ohw = d["angle_hw"][np.isfinite(d["angle_hw"])]
         ohw_str = f"{float(np.mean(ohw)):.4f}" if ohw.size else "n/a"
         L.append(f"   Mean 95% orientation half-width [deg]   = {ohw_str}")
@@ -251,8 +257,8 @@ def write_report(results, out_path):
         t, d = r["time"], r["desc"]
         H0, H1 = interp_at(t, d["H"], 0.0), interp_at(t, d["H"], 1.0)
         ang = d["angle"][np.isfinite(d["angle"])]
-        sweep = (ang[-1] - ang[0]) if ang.size else np.nan
-        sweep_txt = f"{sweep:>11.3f}" if np.isfinite(sweep) else f"{'n/a':>11}"
+        reorient = (ang[-1] - ang[0] + 90.0) % 180.0 - 90.0 if ang.size else np.nan
+        sweep_txt = f"{reorient:>11.3f}" if np.isfinite(reorient) else f"{'n/a':>11}"
         L.append(
             f"   {('C' + str(i)):<6}{r['eps']:>8.3f}"
             f"{H0:>10.4f}{interp_at(t, d['H'], 0.5):>10.4f}{H1:>10.4f}"
